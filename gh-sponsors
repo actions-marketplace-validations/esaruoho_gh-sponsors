@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 GitHub Sponsors CLI (gh-sponsors)
-A standalone CLI script and GitHub CLI extension to aggregate and display GitHub Sponsors data.
+A standalone CLI script, GitHub CLI extension, and GitHub Action to aggregate and display GitHub Sponsors data.
 
 Usage:
   gh sponsors
@@ -17,7 +17,7 @@ import json
 import argparse
 import subprocess
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, List, Any, Optional
 
 GRAPHQL_QUERY = """
 {
@@ -142,20 +142,24 @@ GRAPHQL_QUERY = """
 }
 """
 
+# Terminal Colors
 class Colors:
     RESET = "\033[0m"
     BOLD = "\033[1m"
     DIM = "\033[2m"
+    UNDERLINE = "\033[4m"
     RED = "\033[31m"
     GREEN = "\033[32m"
     YELLOW = "\033[33m"
+    BLUE = "\033[34m"
+    MAGENTA = "\033[35m"
     CYAN = "\033[36m"
     WHITE = "\033[37m"
     GRAY = "\033[90m"
     B_GREEN = "\033[92m"
+    B_YELLOW = "\033[93m"
     B_CYAN = "\033[96m"
     B_WHITE = "\033[97m"
-    MAGENTA = "\033[35m"
 
 def disable_colors():
     for attr in dir(Colors):
@@ -196,6 +200,9 @@ def fetch_sponsors_data() -> Dict[str, Any]:
         err_msg = e.stderr or e.stdout
         print(f"{Colors.RED}Error querying GitHub Sponsors API:{Colors.RESET}", file=sys.stderr)
         print(err_msg.strip(), file=sys.stderr)
+        if "INSUFFICIENT_SCOPES" in err_msg or "read:user" in err_msg:
+            print(f"\n{Colors.YELLOW}Run this command to refresh your token scopes:{Colors.RESET}")
+            print(f"  {Colors.BOLD}gh auth refresh -s read:user{Colors.RESET}\n")
         sys.exit(1)
 
 def process_data(viewer: Dict[str, Any], public_only: bool = False) -> Dict[str, Any]:
@@ -228,6 +235,8 @@ def process_data(viewer: Dict[str, Any], public_only: bool = False) -> Dict[str,
             "is_active": node.get("isActive", False),
             "privacy_level": priv_level,
             "current_tier": node.get("tier"),
+            "relationship_created_at": node.get("createdAt"),
+            "tier_selected_at": node.get("tierSelectedAt"),
             "transactions": [],
             "total_dollars": 0.0,
         }
@@ -256,6 +265,8 @@ def process_data(viewer: Dict[str, Any], public_only: bool = False) -> Dict[str,
                 "is_active": False,
                 "privacy_level": priv_level,
                 "current_tier": act.get("sponsorsTier"),
+                "relationship_created_at": act.get("timestamp"),
+                "tier_selected_at": act.get("timestamp"),
                 "transactions": [],
                 "total_dollars": 0.0,
             }
@@ -284,6 +295,12 @@ def process_data(viewer: Dict[str, Any], public_only: bool = False) -> Dict[str,
     active_sponsors.sort(key=lambda x: x["total_dollars"], reverse=True)
     past_sponsors.sort(key=lambda x: x["total_dollars"], reverse=True)
     
+    total_lifetime_dollars = sum(s["total_dollars"] for s in entities_by_login.values())
+    total_transactions_count = sum(len(s["transactions"]) for s in entities_by_login.values())
+    total_active_monthly_dollars = sum(
+        get_tier_dollars(s.get("current_tier")) for s in active_sponsors if not s.get("current_tier", {}).get("isOneTime", False)
+    )
+
     return {
         "viewer_login": viewer.get("login"),
         "viewer_name": viewer.get("name"),
@@ -291,64 +308,134 @@ def process_data(viewer: Dict[str, Any], public_only: bool = False) -> Dict[str,
         "active_sponsors": active_sponsors,
         "past_sponsors": past_sponsors,
         "all_sponsors": list(entities_by_login.values()),
-        "total_lifetime_dollars": sum(s["total_dollars"] for s in entities_by_login.values()),
-        "total_transactions_count": sum(len(s["transactions"]) for s in entities_by_login.values()),
-        "total_active_monthly_dollars": sum(get_tier_dollars(s.get("current_tier")) for s in active_sponsors if not s.get("current_tier", {}).get("isOneTime", False)),
+        "total_lifetime_dollars": total_lifetime_dollars,
+        "total_transactions_count": total_transactions_count,
+        "total_active_monthly_dollars": total_active_monthly_dollars,
         "unique_sponsors_count": len(entities_by_login),
     }
 
 def print_markdown(summary: Dict[str, Any]):
-    print(f"## Sponsors")
-    print(f"Thank you to everyone who supports this work. Lifetime contributions: **${summary['total_lifetime_dollars']:.2f} USD** from {summary['unique_sponsors_count']} unique sponsors.\n")
+    login = summary["viewer_login"]
+    print(f"## Sponsors for @{login}")
+    print(f"Thank you to everyone who supports this work. Lifetime contributions: **${summary['total_lifetime_dollars']:.2f} USD** from {summary['unique_sponsors_count']} unique supporters.\n")
     
     if summary['active_sponsors']:
-        print("### Active Sponsors")
+        print("### Active Recurring Sponsors")
         for s in summary['active_sponsors']:
             print(f"- **[{s['name']}]({s['url']})** (@{s['login']}) — Total: ${s['total_dollars']:.2f}")
         print()
         
     if summary['past_sponsors']:
-        print("### Past & One-Time Sponsors")
+        print("### One-Time & Past Sponsors")
         for s in summary['past_sponsors']:
-            print(f"- **[{s['name']}]({s['url']})** (@{s['login']}) — Total: ${s['total_dollars']:.2f}")
+            tx_count = len(s["transactions"])
+            count_str = f"({tx_count} contributions)" if tx_count > 1 else ""
+            print(f"- **[{s['name']}]({s['url']})** (@{s['login']}) — Total: ${s['total_dollars']:.2f} {count_str}".strip())
 
 def print_rich_report(summary: Dict[str, Any], show_all_tiers: bool = False):
     listing = summary["listing"]
     login = summary["viewer_login"]
     listing_url = listing.get("url") or f"https://github.com/sponsors/{login}"
+    goal = listing.get("activeGoal") or {}
+    stripe = listing.get("activeStripeConnectAccount") or {}
     
-    print(f"\n{Colors.BOLD}{Colors.B_CYAN}═══════════════════════════════════════════════════════════════════════════════════════════════{Colors.RESET}")
+    print()
+    print(f"{Colors.BOLD}{Colors.B_CYAN}═══════════════════════════════════════════════════════════════════════════════════════════════{Colors.RESET}")
     print(f"{Colors.BOLD}{Colors.B_WHITE}  🌟 GITHUB SPONSORS — @{login} {Colors.RESET} {Colors.DIM}({listing_url}){Colors.RESET}")
     print(f"{Colors.BOLD}{Colors.B_CYAN}═══════════════════════════════════════════════════════════════════════════════════════════════{Colors.RESET}")
     
     print(f"\n{Colors.BOLD}{Colors.YELLOW}📊 FINANCIAL OVERVIEW{Colors.RESET}")
-    print(f"  • {Colors.BOLD}Lifetime Total Received:{Colors.RESET}   {Colors.B_GREEN}${summary['total_lifetime_dollars']:.2f} USD{Colors.RESET} {Colors.DIM}(from {summary['unique_sponsors_count']} sponsors){Colors.RESET}")
-    print(f"  • {Colors.BOLD}Active Recurring Income:{Colors.RESET}    {Colors.B_CYAN}${summary['total_active_monthly_dollars']:.2f}/mo{Colors.RESET}")
+    print(f"  • {Colors.BOLD}Lifetime Total Received:{Colors.RESET}   {Colors.B_GREEN}${summary['total_lifetime_dollars']:.2f} USD{Colors.RESET} {Colors.DIM}(across {summary['total_transactions_count']} contributions from {summary['unique_sponsors_count']} unique sponsors){Colors.RESET}")
+    print(f"  • {Colors.BOLD}Active Recurring Income:{Colors.RESET}    {Colors.B_CYAN}${summary['total_active_monthly_dollars']:.2f}/mo{Colors.RESET} {Colors.DIM}(active monthly sponsors: {len(summary['active_sponsors'])}){Colors.RESET}")
+    
+    if listing.get("nextPayoutDate"):
+        print(f"  • {Colors.BOLD}Next Scheduled Payout:{Colors.RESET}      {Colors.WHITE}{listing['nextPayoutDate']}{Colors.RESET}")
+        
+    if stripe.get("accountId"):
+        status = f"{Colors.GREEN}Active{Colors.RESET}" if stripe.get("isActive") else f"{Colors.RED}Inactive{Colors.RESET}"
+        print(f"  • {Colors.BOLD}Stripe Connect Account:{Colors.RESET}     {stripe['accountId']} ({stripe.get('countryOrRegion', 'Finland')}) [{status}]")
+        
+    if goal.get("targetValue"):
+        pct = goal.get("percentComplete", 0)
+        target = goal.get("targetValue")
+        bar_len = 25
+        filled = int((pct / 100.0) * bar_len)
+        bar = f"{Colors.GREEN}{'█' * filled}{Colors.GRAY}{'░' * (bar_len - filled)}{Colors.RESET}"
+        print(f"  • {Colors.BOLD}Active Funding Goal:{Colors.RESET}        [{bar}] {pct}% (Target: ${target}/mo)")
+        if goal.get("description"):
+            short_desc = goal["description"][:110] + ("..." if len(goal["description"]) > 110 else "")
+            print(f"    {Colors.DIM}\"{short_desc}\"{Colors.RESET}")
 
     print(f"\n{Colors.BOLD}{Colors.GREEN}🟢 CURRENT ACTIVE SPONSORS ({len(summary['active_sponsors'])}){Colors.RESET}")
-    for s in summary["active_sponsors"]:
-        _print_sponsor_card(s, is_active=True)
+    if not summary["active_sponsors"]:
+        print(f"  {Colors.DIM}No active recurring sponsors right now.{Colors.RESET}")
+    else:
+        for s in summary["active_sponsors"]:
+            _print_sponsor_card(s, is_active=True)
 
     print(f"\n{Colors.BOLD}{Colors.MAGENTA}🤝 ALL SPONSORS & HISTORICAL CONTRIBUTIONS ({len(summary['all_sponsors'])}){Colors.RESET}")
     for idx, s in enumerate(summary["all_sponsors"], start=1):
         _print_sponsor_card(s, index=idx)
-        
+
+    tiers = listing.get("tiers", {}).get("nodes", [])
+    if tiers:
+        print(f"\n{Colors.BOLD}{Colors.CYAN}🏷️ CONFIGURED SPONSORSHIP TIERS ({len(tiers)} Tiers){Colors.RESET}")
+        if not show_all_tiers and len(tiers) > 4:
+            print(f"  {Colors.DIM}(Showing 4 of {len(tiers)} tiers. Use --all-tiers to inspect all){Colors.RESET}")
+            display_tiers = tiers[:4]
+        else:
+            display_tiers = tiers
+            
+        for t in display_tiers:
+            t_type = f"{Colors.YELLOW}One-time{Colors.RESET}" if t.get("isOneTime") else f"{Colors.GREEN}Monthly{Colors.RESET}"
+            dollars = get_tier_dollars(t)
+            name = t.get("name", "")
+            desc = t.get("description", "").replace("\n", " ")
+            if len(desc) > 70:
+                desc = desc[:67] + "..."
+            print(f"  • {Colors.BOLD}{name:<16}{Colors.RESET} [{t_type:<18}] {Colors.B_WHITE}${dollars:>6.2f}{Colors.RESET}  {Colors.DIM}{desc}{Colors.RESET}")
+
     print(f"\n{Colors.BOLD}{Colors.B_CYAN}═══════════════════════════════════════════════════════════════════════════════════════════════{Colors.RESET}\n")
 
 def _print_sponsor_card(s: Dict[str, Any], is_active: bool = False, index: Optional[int] = None):
     prefix = f"[{index}] " if index is not None else ""
     name_display = f"{Colors.BOLD}{Colors.B_WHITE}{s['name']}{Colors.RESET} ({Colors.CYAN}@{s['login']}{Colors.RESET})"
     total_badge = f"{Colors.BOLD}{Colors.B_GREEN}${s['total_dollars']:.2f} USD total{Colors.RESET}"
+    tx_count = len(s["transactions"])
+    count_str = f"{tx_count} contribution" if tx_count == 1 else f"{tx_count} contributions"
     
-    status_badge = f"{Colors.GREEN}[ACTIVE]{Colors.RESET}" if s["is_active"] else f"{Colors.GRAY}[PAST]{Colors.RESET}"
+    status_badge = f"{Colors.GREEN}[ACTIVE RECURRING]{Colors.RESET}" if s["is_active"] else f"{Colors.GRAY}[COMPLETED / PAST]{Colors.RESET}"
     priv_badge = f"{Colors.RED}[PRIVATE]{Colors.RESET}" if s.get("privacy_level") == "PRIVATE" else f"{Colors.GREEN}[PUBLIC]{Colors.RESET}"
     
-    print(f"  ┌─ {prefix}{name_display}  {status_badge} {priv_badge} ── {total_badge}")
-    if s["transactions"]:
+    print(f"  ┌─ {prefix}{name_display}  {status_badge} {priv_badge} ── {total_badge} ({count_str})")
+    
+    meta_parts = []
+    if s.get("location"):
+        meta_parts.append(f"📍 {s['location']}")
+    if s.get("company"):
+        meta_parts.append(f"🏢 {s['company']}")
+    if s.get("email"):
+        meta_parts.append(f"✉️ {s['email']}")
+    if s.get("websiteUrl"):
+        meta_parts.append(f"🌐 {s['websiteUrl']}")
+    if meta_parts:
+        print(f"  │  {Colors.DIM}{' • '.join(meta_parts)}{Colors.RESET}")
+        
+    if s.get("bio"):
+        print(f"  │  {Colors.DIM}Bio: \"{s['bio']}\"{Colors.RESET}")
+        
+    print(f"  │  {Colors.BOLD}Transaction History:{Colors.RESET}")
+    if not s["transactions"]:
+        print(f"  │    {Colors.DIM}No individual transaction records logged.{Colors.RESET}")
+    else:
         for t in s["transactions"]:
             date_str = format_date(t.get("timestamp"))
             amt = t.get("amount_dollars", 0.0)
-            print(f"  │    • {Colors.WHITE}{date_str}{Colors.RESET}  →  {Colors.B_GREEN}${amt:>6.2f}{Colors.RESET}  ({t.get('tier_name', '')})")
+            t_type = "One-time" if t.get("is_one_time") else "Monthly"
+            tier_name = t.get("tier_name", "")
+            t_priv = f"{Colors.DIM}private{Colors.RESET}" if t.get("privacy_level") == "PRIVATE" else "public"
+            print(f"  │    • {Colors.WHITE}{date_str}{Colors.RESET}  →  {Colors.B_GREEN}${amt:>6.2f}{Colors.RESET}  {Colors.YELLOW}[{t_type}]{Colors.RESET}  ({tier_name}) [{t_priv}]")
+            
     print(f"  └──────────────────────────────────────────────────────────────────────────────────────────")
 
 def main():
@@ -368,7 +455,25 @@ def main():
     summary = process_data(viewer_data, public_only=args.public_only)
 
     if args.json:
-        print(json.dumps(summary, indent=2))
+        clean_out = {
+            "maintainer": summary["viewer_login"],
+            "totals": {
+                "lifetime_dollars": summary["total_lifetime_dollars"],
+                "active_monthly_recurring_dollars": summary["total_active_monthly_dollars"],
+                "transactions_count": summary["total_transactions_count"],
+                "unique_sponsors_count": summary["unique_sponsors_count"],
+            },
+            "payout": {
+                "next_payout_date": summary["listing"].get("nextPayoutDate"),
+                "stripe_account_id": summary["listing"].get("activeStripeConnectAccount", {}).get("accountId"),
+                "country": summary["listing"].get("activeStripeConnectAccount", {}).get("countryOrRegion"),
+            },
+            "active_sponsors": summary["active_sponsors"],
+            "past_sponsors": summary["past_sponsors"],
+            "all_sponsors": summary["all_sponsors"],
+            "tiers": summary["listing"].get("tiers", {}).get("nodes", []),
+        }
+        print(json.dumps(clean_out, indent=2))
     elif args.csv:
         import csv
         writer = csv.writer(sys.stdout)
