@@ -352,8 +352,11 @@ def print_rich_report(summary: Dict[str, Any], show_all_tiers: bool = False):
         print(f"  • {Colors.BOLD}Next Scheduled Payout:{Colors.RESET}      {Colors.WHITE}{listing['nextPayoutDate']}{Colors.RESET}")
         
     if stripe.get("accountId"):
-        status = f"{Colors.GREEN}Active{Colors.RESET}" if stripe.get("isActive") else f"{Colors.RED}Inactive{Colors.RESET}"
-        print(f"  • {Colors.BOLD}Stripe Connect Account:{Colors.RESET}     {stripe['accountId']} ({stripe.get('countryOrRegion', 'Finland')}) [{status}]")
+        status = f"{Colors.GREEN}Connected & Active{Colors.RESET}" if stripe.get("isActive") else f"{Colors.RED}Inactive{Colors.RESET}"
+        country = stripe.get("countryOrRegion", "Finland")
+        raw_id = stripe.get("accountId", "")
+        masked_id = f"acct_...{raw_id[-4:]}" if len(raw_id) > 8 else "Configured"
+        print(f"  • {Colors.BOLD}Stripe Payout Status:{Colors.RESET}       [{status}] ({country}) {Colors.DIM}({masked_id}){Colors.RESET}")
         
     if goal.get("targetValue"):
         pct = goal.get("percentComplete", 0)
