@@ -1,16 +1,27 @@
 # gh-sponsors
 
-A comprehensive, whitelabeled CLI tool, GitHub CLI extension, and GitHub Action for managing and analyzing your GitHub Sponsors data.
+A comprehensive CLI tool, GitHub CLI extension, and GitHub Action for managing and analyzing your GitHub Sponsors data.
 
-Unlike the default GitHub Dashboard which treats every one-time payment as an isolated event, `gh-sponsors` **aggregates all historical transactions** by person to show you the true lifetime value and chronological timeline of every supporter.
+Unlike the default GitHub Dashboard which treats every one-time payment as an isolated event, `gh-sponsors` **aggregates all historical transactions by person** to give you the true lifetime contribution and chronological timeline of every supporter.
+
+## Why `gh-sponsors`?
+
+Existing tools in the GitHub ecosystem typically fall into two categories:
+1. **Avatar grid generators** (like `github-sponsors-readme-action` or `tj/sponsors-api`): Good for rendering circular profile pictures in a README, but they don't track amounts, transaction history, payouts, or analytics.
+2. **Package paywalling/DRM** (like `devlooped/gh-sponsors`): Designed to gate package installs behind Auth0 tokens, rather than providing maintainer analytics.
+
+`gh-sponsors` fills the gap as a **true maintainer financial ledger and reporting tool**:
+- **Deduplication:** When a supporter makes multiple one-time contributions (e.g. $5 today, $5 next month, $10 later), it rolls them into **1 person with a lifetime sum ($20.00)** and a full chronological ledger.
+- **Privacy Firewall:** Safely export public markdown for your repo (`--public-only`) without exposing private supporter identities or amounts.
+- **Unified Distribution:** Works as a local CLI command (`sponsors`), a native GitHub CLI extension (`gh sponsors`), and an automated GitHub Action.
 
 ## Features
 
 - **Entity Deduplication Engine:** Groups multiple one-time contributions from the same person into a single unified profile.
 - **Privacy Firewall:** Use `--public-only` to filter out private sponsors before exporting data.
-- **Multiple Exports:** Supports beautiful terminal UI, JSON, CSV, and Markdown generation.
+- **Multiple Exports:** Supports terminal UI, JSON, CSV, and Markdown generation.
 - **Three Modes of Operation:**
-  - Standard standalone Python script
+  - Standard standalone CLI script (`sponsors`)
   - GitHub CLI Extension (`gh sponsors`)
   - GitHub Action (auto-generate `SPONSORS.md`)
 
@@ -19,7 +30,6 @@ Unlike the default GitHub Dashboard which treats every one-time payment as an is
 ```bash
 gh extension install esaruoho/gh-sponsors
 ```
-*(Replace `esaruoho` with your username once pushed).*
 
 Then run:
 ```bash
@@ -30,7 +40,7 @@ gh sponsors --public-only --json
 
 ## 2. Use as a GitHub Action
 
-You can automatically regenerate a `SPONSORS.md` file every week:
+Automatically regenerate a `SPONSORS.md` file in your repository on a schedule:
 
 ```yaml
 name: Generate Sponsors
@@ -48,7 +58,7 @@ jobs:
       - name: Generate SPONSORS.md
         uses: esaruoho/gh-sponsors@main
         with:
-          github_token: ${{ secrets.SPONSORS_PAT }} # Must have read:user scope
+          github_token: ${{ secrets.SPONSORS_PAT }} # Requires read:user and read:org
           output_file: 'SPONSORS.md'
           public_only: 'true'
           
@@ -61,7 +71,7 @@ jobs:
           git push
 ```
 
-## 3. Run Locally as a Python Script
+## 3. Run Locally as a Standalone Script
 
 ```bash
 git clone https://github.com/esaruoho/gh-sponsors
@@ -70,16 +80,21 @@ chmod +x gh-sponsors
 ./gh-sponsors --help
 ```
 
-### Options
-- `--markdown` : Output a Markdown summary (perfect for READMEs).
-- `--json` : Output structured JSON for automation.
-- `--csv` : Output a flat CSV spreadsheet of all transactions.
-- `--public-only` : Strip all sponsors who selected "Private".
-- `--all-tiers` : Show all configured sponsor tiers (Terminal mode only).
+### CLI Options
 
-## Authentication
+| Flag | Description |
+| :--- | :--- |
+| *(default)* | Formatted ANSI terminal dashboard with financial overview, goals, and cards |
+| `--markdown` | Clean Markdown summary suitable for READMEs or `SPONSORS.md` |
+| `--public-only` | Omit private sponsors and their transaction data |
+| `--json` | Machine-readable JSON output (ideal for scripting and `jq`) |
+| `--csv` | Flat CSV spreadsheet of all individual transactions |
+| `--all-tiers` | Display all configured tiers on your sponsors profile |
+| `--no-color` | Disable ANSI color codes |
 
-This tool relies on the GitHub GraphQL API. Your token (or `gh` auth status) must have the `read:user` and `read:org` scopes.
+## Authentication & Permissions
+
+This tool queries GitHub's GraphQL API. Your token (or `gh` authentication) must include the `read:user` and `read:org` scopes.
 
 To update your local CLI scopes:
 ```bash
