@@ -105,11 +105,16 @@ gh auth refresh -s read:user
 
 ## 💖 Support this Project
 
-If `gh-sponsors` helps you track your open-source backers or celebrate funding milestones with your community, consider joining as a supporter:
+If `gh-sponsors` helps you track your open-source backers or celebrate funding milestones with your community, consider joining as a supporter on whichever platform fits you best:
 
-[![Sponsor on GitHub](https://img.shields.io/badge/Sponsor%20@esaruoho-%E2%9D%A4-ea4aaa?style=for-the-badge&logo=github)](https://github.com/sponsors/esaruoho)
-
-👉 **[Become a backer at github.com/sponsors/esaruoho](https://github.com/sponsors/esaruoho)**
+| Platform | Link | Purpose |
+| :--- | :--- | :--- |
+| **GitHub Sponsors** | [![Sponsor @esaruoho](https://img.shields.io/badge/GitHub%20Sponsors-%E2%9D%A4-ea4aaa?style=flat-square&logo=github)](https://github.com/sponsors/esaruoho) | Monthly or one-time code sponsorship |
+| **Patreon** | [![Patreon](https://img.shields.io/badge/Patreon-FF424D?style=flat-square&logo=patreon&logoColor=white)](https://patreon.com/esaruoho) | Monthly community & dev updates |
+| **Ko-fi** | [![Ko-fi](https://img.shields.io/badge/Ko--fi-F16061?style=flat-square&logo=ko-fi&logoColor=white)](https://ko-fi.com/esaruoho) | One-time tips & coffees |
+| **Buy Me a Coffee** | [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-FFDD00?style=flat-square&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/esaruoho) | One-time support |
+| **Gumroad** | [![Gumroad](https://img.shields.io/badge/Gumroad-36a9ae?style=flat-square&logo=gumroad&logoColor=white)](https://lackluster.gumroad.com) | Tools, releases & digital items |
+| **Bandcamp** | [![Bandcamp](https://img.shields.io/badge/Bandcamp-629aa9?style=flat-square&logo=bandcamp&logoColor=white)](https://lackluster.bandcamp.com) | Music, albums & subscriptions |
 
 ## License
 
