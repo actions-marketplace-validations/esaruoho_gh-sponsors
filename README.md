@@ -1,5 +1,7 @@
 # gh-sponsors
 
+[![GitHub Sponsors](https://img.shields.io/badge/Sponsor%20@esaruoho-%E2%9D%A4-ea4aaa?style=flat-square&logo=github)](https://github.com/sponsors/esaruoho) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
+
 A comprehensive CLI tool, GitHub CLI extension, and GitHub Action for managing and analyzing your GitHub Sponsors data.
 
 Unlike the default GitHub Dashboard which treats every one-time payment as an isolated event, `gh-sponsors` **aggregates all historical transactions by person** to give you the true lifetime contribution and chronological timeline of every supporter.
@@ -100,6 +102,14 @@ To update your local CLI scopes:
 ```bash
 gh auth refresh -s read:user
 ```
+
+## 💖 Support this Project
+
+If `gh-sponsors` helps you track your open-source backers or celebrate funding milestones with your community, consider joining as a supporter:
+
+[![Sponsor on GitHub](https://img.shields.io/badge/Sponsor%20@esaruoho-%E2%9D%A4-ea4aaa?style=for-the-badge&logo=github)](https://github.com/sponsors/esaruoho)
+
+👉 **[Become a backer at github.com/sponsors/esaruoho](https://github.com/sponsors/esaruoho)**
 
 ## License
 
