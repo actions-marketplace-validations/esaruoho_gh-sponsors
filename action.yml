@@ -1,0 +1,32 @@
+name: 'GitHub Sponsors Markdown Generator'
+description: 'Generates a markdown summary of your GitHub Sponsors using the gh CLI.'
+author: 'esaruoho'
+
+inputs:
+  output_file:
+    description: 'The file to write the markdown output to'
+    required: false
+    default: 'SPONSORS.md'
+  public_only:
+    description: 'Set to true to exclude private sponsors from the output'
+    required: false
+    default: 'true'
+  github_token:
+    description: 'A GitHub PAT with `read:user` and `read:org` scopes'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Run gh-sponsors script
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+      run: |
+        ARGS="--markdown"
+        if [ "${{ inputs.public_only }}" == "true" ]; then
+          ARGS="$ARGS --public-only"
+        fi
+        
+        # Execute the Python script from the action repository
+        python3 ${{ github.action_path }}/gh-sponsors $ARGS > ${{ inputs.output_file }}

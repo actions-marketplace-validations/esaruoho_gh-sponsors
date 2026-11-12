@@ -1,0 +1,390 @@
+#!/usr/bin/env python3
+"""
+GitHub Sponsors CLI (gh-sponsors)
+A standalone CLI script and GitHub CLI extension to aggregate and display GitHub Sponsors data.
+
+Usage:
+  gh sponsors
+  gh sponsors --markdown
+  gh sponsors --json
+  gh sponsors --csv
+  gh sponsors --public-only
+  gh sponsors --all-tiers
+"""
+
+import sys
+import json
+import argparse
+import subprocess
+from datetime import datetime
+from typing import Dict, Any, Optional
+
+GRAPHQL_QUERY = """
+{
+  viewer {
+    login
+    name
+    url
+    sponsorsListing {
+      id
+      slug
+      url
+      dashboardUrl
+      shortDescription
+      createdAt
+      nextPayoutDate
+      activeGoal {
+        description
+        percentComplete
+        targetValue
+      }
+      activeStripeConnectAccount {
+        accountId
+        countryOrRegion
+        isActive
+        stripeDashboardUrl
+      }
+      tiers(first: 50) {
+        totalCount
+        nodes {
+          id
+          name
+          monthlyPriceInDollars
+          monthlyPriceInCents
+          isOneTime
+          description
+          createdAt
+        }
+      }
+    }
+    sponsorshipsAsMaintainer(activeOnly: false, includePrivate: true, first: 100) {
+      totalCount
+      nodes {
+        id
+        createdAt
+        isActive
+        isOneTimePayment
+        isSponsorOptedIntoEmail
+        privacyLevel
+        tierSelectedAt
+        sponsorEntity {
+          ... on User {
+            login
+            name
+            email
+            url
+            avatarUrl
+            bio
+            location
+            company
+            websiteUrl
+          }
+          ... on Organization {
+            login
+            name
+            email
+            url
+            avatarUrl
+            description
+            location
+            websiteUrl
+          }
+        }
+        tier {
+          id
+          name
+          monthlyPriceInDollars
+          monthlyPriceInCents
+          isOneTime
+          description
+        }
+      }
+    }
+    sponsorsActivities(period: ALL, includePrivate: true, first: 100) {
+      totalCount
+      nodes {
+        action
+        timestamp
+        currentPrivacyLevel
+        paymentSource
+        viaBulkSponsorship
+        sponsorsTier {
+          name
+          monthlyPriceInDollars
+          monthlyPriceInCents
+          isOneTime
+        }
+        previousSponsorsTier {
+          name
+          monthlyPriceInDollars
+          monthlyPriceInCents
+        }
+        sponsor {
+          ... on User {
+            login
+            name
+            email
+            url
+            location
+            bio
+          }
+          ... on Organization {
+            login
+            name
+            email
+            url
+            location
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+class Colors:
+    RESET = "\033[0m"
+    BOLD = "\033[1m"
+    DIM = "\033[2m"
+    RED = "\033[31m"
+    GREEN = "\033[32m"
+    YELLOW = "\033[33m"
+    CYAN = "\033[36m"
+    WHITE = "\033[37m"
+    GRAY = "\033[90m"
+    B_GREEN = "\033[92m"
+    B_CYAN = "\033[96m"
+    B_WHITE = "\033[97m"
+    MAGENTA = "\033[35m"
+
+def disable_colors():
+    for attr in dir(Colors):
+        if not attr.startswith("__"):
+            setattr(Colors, attr, "")
+
+def format_date(iso_str: Optional[str]) -> str:
+    if not iso_str:
+        return "-"
+    try:
+        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+        return dt.strftime("%Y-%m-%d %H:%M UTC")
+    except Exception:
+        return iso_str[:10]
+
+def get_tier_dollars(tier: Optional[Dict[str, Any]]) -> float:
+    if not tier:
+        return 0.0
+    if tier.get("monthlyPriceInDollars") is not None:
+        return float(tier["monthlyPriceInDollars"])
+    if tier.get("monthlyPriceInCents") is not None:
+        return float(tier["monthlyPriceInCents"]) / 100.0
+    return 0.0
+
+def fetch_sponsors_data() -> Dict[str, Any]:
+    cmd = ["gh", "api", "graphql", "-f", f"query={GRAPHQL_QUERY}"]
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        data = json.loads(res.stdout)
+        if "errors" in data:
+            msgs = [e.get("message", "") for e in data["errors"]]
+            raise RuntimeError("\n".join(msgs))
+        return data.get("data", {}).get("viewer", {})
+    except FileNotFoundError:
+        print(f"{Colors.RED}Error: 'gh' CLI tool not found in PATH.{Colors.RESET}", file=sys.stderr)
+        sys.exit(1)
+    except subprocess.CalledProcessError as e:
+        err_msg = e.stderr or e.stdout
+        print(f"{Colors.RED}Error querying GitHub Sponsors API:{Colors.RESET}", file=sys.stderr)
+        print(err_msg.strip(), file=sys.stderr)
+        sys.exit(1)
+
+def process_data(viewer: Dict[str, Any], public_only: bool = False) -> Dict[str, Any]:
+    listing = viewer.get("sponsorsListing") or {}
+    maint_conn = viewer.get("sponsorshipsAsMaintainer") or {}
+    act_conn = viewer.get("sponsorsActivities") or {}
+    
+    entities_by_login: Dict[str, Dict[str, Any]] = {}
+    
+    for node in maint_conn.get("nodes", []):
+        entity = node.get("sponsorEntity") or {}
+        login = entity.get("login")
+        if not login:
+            continue
+            
+        priv_level = node.get("privacyLevel", "PUBLIC")
+        if public_only and priv_level == "PRIVATE":
+            continue
+            
+        entities_by_login[login] = {
+            "login": login,
+            "name": entity.get("name") or login,
+            "email": entity.get("email") or "",
+            "url": entity.get("url") or f"https://github.com/{login}",
+            "avatarUrl": entity.get("avatarUrl") or "",
+            "bio": entity.get("bio") or entity.get("description") or "",
+            "location": entity.get("location") or "",
+            "company": entity.get("company") or "",
+            "websiteUrl": entity.get("websiteUrl") or "",
+            "is_active": node.get("isActive", False),
+            "privacy_level": priv_level,
+            "current_tier": node.get("tier"),
+            "transactions": [],
+            "total_dollars": 0.0,
+        }
+        
+    for act in act_conn.get("nodes", []):
+        sp = act.get("sponsor") or {}
+        login = sp.get("login")
+        if not login:
+            continue
+            
+        priv_level = act.get("currentPrivacyLevel", "PUBLIC")
+        if public_only and priv_level == "PRIVATE":
+            continue
+            
+        if login not in entities_by_login:
+            entities_by_login[login] = {
+                "login": login,
+                "name": sp.get("name") or login,
+                "email": sp.get("email") or "",
+                "url": sp.get("url") or f"https://github.com/{login}",
+                "avatarUrl": sp.get("avatarUrl") or "",
+                "bio": sp.get("bio") or "",
+                "location": sp.get("location") or "",
+                "company": "",
+                "websiteUrl": "",
+                "is_active": False,
+                "privacy_level": priv_level,
+                "current_tier": act.get("sponsorsTier"),
+                "transactions": [],
+                "total_dollars": 0.0,
+            }
+            
+        tier = act.get("sponsorsTier") or {}
+        amount = get_tier_dollars(tier)
+        
+        tx = {
+            "action": act.get("action"),
+            "timestamp": act.get("timestamp"),
+            "amount_dollars": amount,
+            "tier_name": tier.get("name", "Unknown"),
+            "is_one_time": tier.get("isOneTime", True),
+            "privacy_level": priv_level,
+            "payment_source": act.get("paymentSource", "GITHUB"),
+        }
+        entities_by_login[login]["transactions"].append(tx)
+        entities_by_login[login]["total_dollars"] += amount
+
+    for data in entities_by_login.values():
+        data["transactions"].sort(key=lambda x: x.get("timestamp") or "")
+
+    active_sponsors = [s for s in entities_by_login.values() if s["is_active"]]
+    past_sponsors = [s for s in entities_by_login.values() if not s["is_active"]]
+    
+    active_sponsors.sort(key=lambda x: x["total_dollars"], reverse=True)
+    past_sponsors.sort(key=lambda x: x["total_dollars"], reverse=True)
+    
+    return {
+        "viewer_login": viewer.get("login"),
+        "viewer_name": viewer.get("name"),
+        "listing": listing,
+        "active_sponsors": active_sponsors,
+        "past_sponsors": past_sponsors,
+        "all_sponsors": list(entities_by_login.values()),
+        "total_lifetime_dollars": sum(s["total_dollars"] for s in entities_by_login.values()),
+        "total_transactions_count": sum(len(s["transactions"]) for s in entities_by_login.values()),
+        "total_active_monthly_dollars": sum(get_tier_dollars(s.get("current_tier")) for s in active_sponsors if not s.get("current_tier", {}).get("isOneTime", False)),
+        "unique_sponsors_count": len(entities_by_login),
+    }
+
+def print_markdown(summary: Dict[str, Any]):
+    print(f"## Sponsors")
+    print(f"Thank you to everyone who supports this work. Lifetime contributions: **${summary['total_lifetime_dollars']:.2f} USD** from {summary['unique_sponsors_count']} unique sponsors.\n")
+    
+    if summary['active_sponsors']:
+        print("### Active Sponsors")
+        for s in summary['active_sponsors']:
+            print(f"- **[{s['name']}]({s['url']})** (@{s['login']}) — Total: ${s['total_dollars']:.2f}")
+        print()
+        
+    if summary['past_sponsors']:
+        print("### Past & One-Time Sponsors")
+        for s in summary['past_sponsors']:
+            print(f"- **[{s['name']}]({s['url']})** (@{s['login']}) — Total: ${s['total_dollars']:.2f}")
+
+def print_rich_report(summary: Dict[str, Any], show_all_tiers: bool = False):
+    listing = summary["listing"]
+    login = summary["viewer_login"]
+    listing_url = listing.get("url") or f"https://github.com/sponsors/{login}"
+    
+    print(f"\n{Colors.BOLD}{Colors.B_CYAN}═══════════════════════════════════════════════════════════════════════════════════════════════{Colors.RESET}")
+    print(f"{Colors.BOLD}{Colors.B_WHITE}  🌟 GITHUB SPONSORS — @{login} {Colors.RESET} {Colors.DIM}({listing_url}){Colors.RESET}")
+    print(f"{Colors.BOLD}{Colors.B_CYAN}═══════════════════════════════════════════════════════════════════════════════════════════════{Colors.RESET}")
+    
+    print(f"\n{Colors.BOLD}{Colors.YELLOW}📊 FINANCIAL OVERVIEW{Colors.RESET}")
+    print(f"  • {Colors.BOLD}Lifetime Total Received:{Colors.RESET}   {Colors.B_GREEN}${summary['total_lifetime_dollars']:.2f} USD{Colors.RESET} {Colors.DIM}(from {summary['unique_sponsors_count']} sponsors){Colors.RESET}")
+    print(f"  • {Colors.BOLD}Active Recurring Income:{Colors.RESET}    {Colors.B_CYAN}${summary['total_active_monthly_dollars']:.2f}/mo{Colors.RESET}")
+
+    print(f"\n{Colors.BOLD}{Colors.GREEN}🟢 CURRENT ACTIVE SPONSORS ({len(summary['active_sponsors'])}){Colors.RESET}")
+    for s in summary["active_sponsors"]:
+        _print_sponsor_card(s, is_active=True)
+
+    print(f"\n{Colors.BOLD}{Colors.MAGENTA}🤝 ALL SPONSORS & HISTORICAL CONTRIBUTIONS ({len(summary['all_sponsors'])}){Colors.RESET}")
+    for idx, s in enumerate(summary["all_sponsors"], start=1):
+        _print_sponsor_card(s, index=idx)
+        
+    print(f"\n{Colors.BOLD}{Colors.B_CYAN}═══════════════════════════════════════════════════════════════════════════════════════════════{Colors.RESET}\n")
+
+def _print_sponsor_card(s: Dict[str, Any], is_active: bool = False, index: Optional[int] = None):
+    prefix = f"[{index}] " if index is not None else ""
+    name_display = f"{Colors.BOLD}{Colors.B_WHITE}{s['name']}{Colors.RESET} ({Colors.CYAN}@{s['login']}{Colors.RESET})"
+    total_badge = f"{Colors.BOLD}{Colors.B_GREEN}${s['total_dollars']:.2f} USD total{Colors.RESET}"
+    
+    status_badge = f"{Colors.GREEN}[ACTIVE]{Colors.RESET}" if s["is_active"] else f"{Colors.GRAY}[PAST]{Colors.RESET}"
+    priv_badge = f"{Colors.RED}[PRIVATE]{Colors.RESET}" if s.get("privacy_level") == "PRIVATE" else f"{Colors.GREEN}[PUBLIC]{Colors.RESET}"
+    
+    print(f"  ┌─ {prefix}{name_display}  {status_badge} {priv_badge} ── {total_badge}")
+    if s["transactions"]:
+        for t in s["transactions"]:
+            date_str = format_date(t.get("timestamp"))
+            amt = t.get("amount_dollars", 0.0)
+            print(f"  │    • {Colors.WHITE}{date_str}{Colors.RESET}  →  {Colors.B_GREEN}${amt:>6.2f}{Colors.RESET}  ({t.get('tier_name', '')})")
+    print(f"  └──────────────────────────────────────────────────────────────────────────────────────────")
+
+def main():
+    parser = argparse.ArgumentParser(description="Comprehensive GitHub Sponsors CLI")
+    parser.add_argument("--json", action="store_true", help="Output JSON")
+    parser.add_argument("--csv", action="store_true", help="Output CSV")
+    parser.add_argument("--markdown", action="store_true", help="Output Markdown")
+    parser.add_argument("--public-only", action="store_true", help="Filter out private sponsors")
+    parser.add_argument("--all-tiers", action="store_true", help="Show all tiers")
+    parser.add_argument("--no-color", action="store_true", help="Disable colors")
+    args = parser.parse_args()
+
+    if args.no_color or not sys.stdout.isatty():
+        disable_colors()
+
+    viewer_data = fetch_sponsors_data()
+    summary = process_data(viewer_data, public_only=args.public_only)
+
+    if args.json:
+        print(json.dumps(summary, indent=2))
+    elif args.csv:
+        import csv
+        writer = csv.writer(sys.stdout)
+        writer.writerow(["Date", "Login", "Name", "Email", "Amount_USD", "Type", "Privacy", "Status"])
+        for s in summary["all_sponsors"]:
+            status = "active" if s["is_active"] else "past"
+            for t in s["transactions"]:
+                writer.writerow([
+                    format_date(t.get("timestamp")), s["login"], s["name"], s["email"],
+                    f"{t.get('amount_dollars', 0.0):.2f}", "One-time" if t.get("is_one_time") else "Monthly",
+                    t.get("privacy_level"), status
+                ])
+    elif args.markdown:
+        print_markdown(summary)
+    else:
+        print_rich_report(summary, show_all_tiers=args.all_tiers)
+
+if __name__ == "__main__":
+    main()
