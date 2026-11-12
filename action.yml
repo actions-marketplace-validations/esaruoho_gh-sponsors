@@ -2,6 +2,10 @@ name: 'GitHub Sponsors Markdown Generator'
 description: 'Generates a markdown summary of your GitHub Sponsors using the gh CLI.'
 author: 'esaruoho'
 
+branding:
+  icon: 'heart'
+  color: 'red'
+
 inputs:
   output_file:
     description: 'The file to write the markdown output to'
